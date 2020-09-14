@@ -1,31 +1,23 @@
-#ifndef UNICODE
+﻿#ifndef UNICODE
 #define UNICODE
 #endif // !UNICODE
 
 #include <Windows.h>
 #include <windowsx.h>
 #include <string>
+#include "Structures.h"
 
 constexpr auto tmr_GameTick = 1;
 
-struct sGameInfo
-{
-	unsigned short int SquareSize = 20;
-	HDC hdc = NULL;
-	int x = 100;
-	int y = 100;
-	int TickInterval = 500;
-	HBRUSH bgBrush = (HBRUSH)COLOR_BACKGROUND;
-};
-
-LRESULT CALLBACK HandleMessages(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-int DrawSquare(sGameInfo* pGI);
-int DrawTile(sGameInfo* pGI, int type);
-int DrawBoard(sGameInfo* pGI);
+LRESULT CALLBACK HandleMessages(HWND, UINT, WPARAM, LPARAM);
+int DrawBlock(tGameInfo*, RECT, tTriColor);
+int DrawTile(tGameInfo*, int);
+int DrawBoard(tGameInfo*);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
 {
-	sGameInfo* pGI = new sGameInfo;
+	tGameInfo* pGI = new tGameInfo;
+	pGI->Init();
 	LOGBRUSH lbr = {};
 	lbr.lbColor = RGB(50, 50, 50);
 	pGI->bgBrush = CreateBrushIndirect(&lbr);
@@ -46,7 +38,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		CLASS_NAME,
 		WINDOW_NAME,
 		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+		700, 100, 450, 800,
 		NULL, NULL, hInstance, pGI);
 
 	SetTimer(hwnd, tmr_GameTick, pGI->TickInterval , NULL);
@@ -66,24 +58,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 
 LRESULT CALLBACK HandleMessages(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-	sGameInfo* pGI = NULL;
+	tGameInfo* pGI = NULL;
 	if (uMsg == WM_CREATE)
 	{
 		CREATESTRUCTW *pcs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-		pGI = reinterpret_cast<sGameInfo*>(pcs->lpCreateParams);
+		pGI = reinterpret_cast<tGameInfo*>(pcs->lpCreateParams);
 		SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)pGI);
 	}
 	else
 	{
 		LONG_PTR lp = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-		pGI = reinterpret_cast<sGameInfo*>(lp);
+		pGI = reinterpret_cast<tGameInfo*>(lp);
 	}
 	
 	switch (uMsg)
 	{
 		case WM_TIMER:
 		{
-			pGI->y += pGI->SquareSize;
+			pGI->ActiveTile.MoveDown();
 			InvalidateRect(hwnd, NULL, TRUE);
 		}
 		return 0;
@@ -93,13 +85,19 @@ LRESULT CALLBACK HandleMessages(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 			{
 				case VK_LEFT:
 				{
-					pGI->x -= 20;
+					pGI->ActiveTile.MoveLeft();
 					InvalidateRect(hwnd, NULL, TRUE);
 				}
 				return 0;
 				case VK_RIGHT:
 				{
-					pGI->x += 20;
+					pGI->ActiveTile.MoveRight();
+					InvalidateRect(hwnd, NULL, TRUE);
+				}
+				return 0;
+				case VK_DOWN:
+				{
+					pGI->ActiveTile.MoveDown();
 					InvalidateRect(hwnd, NULL, TRUE);
 				}
 				return 0;
@@ -113,7 +111,7 @@ LRESULT CALLBACK HandleMessages(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 			SelectObject(pGI->hdc, GetStockObject(DC_BRUSH));
 			SelectObject(pGI->hdc, GetStockObject(DC_PEN));
 			DrawBoard(pGI);
-			DrawTile(pGI, 1);
+			DrawTile(pGI, 3);
 			EndPaint(hwnd, &ps);
 		}
 		return 0;
@@ -127,57 +125,122 @@ LRESULT CALLBACK HandleMessages(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
-int DrawSquare(sGameInfo* pGI)
+int DrawBlock(tGameInfo* pGI, RECT r, tTriColor tricolor)
 {
-	SetDCBrushColor(pGI->hdc, RGB(230, 230, 230));
-	SetDCPenColor(pGI->hdc, RGB(30, 30, 30));
-	RECT r = {};
-	r.left = pGI->x;
-	r.top = pGI->y;
-	r.right = r.left + pGI->SquareSize;
-	r.bottom = r.top + pGI->SquareSize;
-	Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
-	r.left +=pGI->SquareSize;
-	//r.top = pGI->y;
-	r.right += pGI->SquareSize;
-	//r.bottom = r.top + pGI->SquareSize;
-	Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+	POINT apt[3];
+	{
+		SetDCBrushColor(pGI->hdc, tricolor.colour[0]);
+		SetDCPenColor(pGI->hdc, tricolor.colour[0]);
+		Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+//		MoveToEx(pGI->hdc, r.left, r.top, NULL);
+//		SetDCPenColor(pGI->hdc, RGB(243, 97, 97));
+//		LineTo(pGI->hdc, r.left + 4, r.top + 4);
+		SetPixel(pGI->hdc, r.left, r.top, pGI->GBColor.colour[2]);
+	}
+	{
+		SetDCBrushColor(pGI->hdc, tricolor.colour[1]);
+		SetDCPenColor(pGI->hdc, tricolor.colour[1]);
+		apt[0].x = r.right - 1;
+		apt[0].y = r.top + 1;
+		apt[1].x = r.right - 1;
+		apt[1].y = r.bottom - 1;
+		apt[2].x = r.left + 1;
+		apt[2].y = r.bottom - 1;
+		Polygon(pGI->hdc, apt, 3);
+	}
+	{
+		SetDCBrushColor(pGI->hdc, tricolor.colour[2]);
+		SetDCPenColor(pGI->hdc, tricolor.colour[2]);
+		MoveToEx(pGI->hdc, r.right - 1, r.top, NULL);
+		LineTo(pGI->hdc, r.left - 1, r.bottom);
+		SetPixel(pGI->hdc, r.right - 1, r.top, pGI->GBColor.colour[2]);
+		SetPixel(pGI->hdc, r.left, r.bottom - 1, pGI->GBColor.colour[2]);
+		SetPixel(pGI->hdc, r.right-1, r.bottom - 1, pGI->GBColor.colour[2]);
+		r.left += 3;
+		r.top += 3;
+		r.right -= 3;
+		r.bottom -= 3;
+		Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+	}
 	return 0;
 }
 
-int DrawTile(sGameInfo* pGI, int type)
+int DrawTile(tGameInfo* pGI, int type)
 {
-	DrawSquare(pGI);
+	RECT r = {};
+	r.left = pGI->GameBoard.left + pGI->GameBoard.borderWidth + pGI->ActiveTile.left * pGI->BlockSize;
+	r.top = pGI->GameBoard.top + pGI->GameBoard.borderWidth + pGI->ActiveTile.bottom * pGI->BlockSize;
+	r.right = r.left + pGI->BlockSize;
+	r.bottom = r.top + pGI->BlockSize;
+
+	for (int i = 0; i < 4; ++i)
+	{
+		r.left += pGI->Tiles[type].parts.p[i].x * pGI->BlockSize;
+		r.top += pGI->Tiles[type].parts.p[i].y * pGI->BlockSize;
+		r.right = r.left + pGI->BlockSize;
+		r.bottom = r.top + pGI->BlockSize;
+		if (r.top > pGI->GameBoard.top+pGI->GameBoard.borderWidth)
+		{
+			DrawBlock(pGI, r, pGI->TriColor[type]);
+		}
+	}
 	return 0;
 }
 
-int DrawBoard(sGameInfo* pGI)
+int DrawBoard(tGameInfo* pGI)
 {
 	RECT r = {};
-	r.left = 50;
-	r.top = 50;
-	r.right = r.left + 400;
-	r.bottom = r.top + 600;
-	SetDCBrushColor(pGI->hdc, RGB(200, 200, 200));
-	SetDCPenColor(pGI->hdc, RGB(200, 200, 200));
-	Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
 	POINT apt[3] = {};
-	apt[0].x = r.right;
-	apt[0].y = r.top;
-	apt[1].x = r.right;
-	apt[1].y = r.bottom;
-	apt[2].x = r.left;
-	apt[2].y = r.bottom;
-	SetDCBrushColor(pGI->hdc, RGB(150, 150, 150));
-	SetDCPenColor(pGI->hdc, RGB(150, 150, 150));
-	Polygon(pGI->hdc, apt, 3);
-	r.left += 5;
-	r.top += 5;
-	r.right -= 5;
-	r.bottom -= 5;
-	SetDCBrushColor(pGI->hdc, RGB(30, 230, 30));
-	SetDCPenColor(pGI->hdc, RGB(30, 230, 30));
-	Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
-	
+	{
+		SetDCBrushColor(pGI->hdc, pGI->GBColor.colour[0]);
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[0]);
+		r.left = pGI->GameBoard.left;
+		r.top = pGI->GameBoard.top;
+		r.right = r.left + pGI->GameBoard.borderWidth * 2 + pGI->GameBoard.width * pGI->BlockSize;
+		r.bottom = r.top + pGI->GameBoard.borderWidth * 2 + pGI->GameBoard.height * pGI->BlockSize;
+		Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+	}
+	{
+		SetDCBrushColor(pGI->hdc, pGI->GBColor.colour[1]);
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[1]);
+		apt[0].x = r.right - 1;
+		apt[0].y = r.top;
+		apt[1].x = r.right - 1;
+		apt[1].y = r.top + pGI->GameBoard.borderWidth-1;
+		apt[2].x = r.right - pGI->GameBoard.borderWidth;
+		apt[2].y = r.top + pGI->GameBoard.borderWidth - 1;
+		Polygon(pGI->hdc, apt, 3);
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[2]);
+		MoveToEx(pGI->hdc, apt[0].x, apt[0].y, NULL);
+		LineTo(pGI->hdc, apt[2].x - 1, apt[2].y + 1);
+	}
+	{
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[1]);
+		apt[0].x = r.left + pGI->GameBoard.borderWidth - 1;
+		apt[0].y = r.bottom - pGI->GameBoard.borderWidth;
+		apt[1].x = r.left + pGI->GameBoard.borderWidth - 1;
+		apt[1].y = r.bottom - 1;
+		apt[2].x = r.left;
+		apt[2].y = r.bottom - 1;
+		Polygon(pGI->hdc, apt, 3);
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[2]);
+		MoveToEx(pGI->hdc, apt[0].x, apt[0].y, NULL);
+		LineTo(pGI->hdc, apt[2].x - 1, apt[2].y + 1);
+	}
+	{
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[1]);
+		r.left = pGI->GameBoard.left + pGI->GameBoard.borderWidth;
+		r.right = r.left + pGI->GameBoard.borderWidth + pGI->GameBoard.width * pGI->BlockSize;
+		r.top = pGI->GameBoard.top + pGI->GameBoard.borderWidth;
+		r.bottom = r.top + pGI->GameBoard.height * pGI->BlockSize + pGI->GameBoard.borderWidth;
+		Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+	}
+	{
+		SetDCBrushColor(pGI->hdc, pGI->GBColor.colour[2]);
+		SetDCPenColor(pGI->hdc, pGI->GBColor.colour[2]);
+		r.right = r.right - pGI->GameBoard.borderWidth;
+		r.bottom = r.bottom - pGI->GameBoard.borderWidth;
+		Rectangle(pGI->hdc, r.left, r.top, r.right, r.bottom);
+	}
 	return 0;
 }
